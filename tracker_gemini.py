@@ -2,15 +2,10 @@ import os
 import time
 import json
 import io
-from datetime import datetime
-import sqlite3
-from pathlib import Path
 from datetime import datetime, UTC
+import random
 
-#FastAPI
 import requests
-from datetime import datetime, UTC
-
 import mss
 from PIL import Image
 from dotenv import load_dotenv
@@ -18,20 +13,19 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-import random
-
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")  # vision-capable model
-INTERVAL_SECONDS =  random.randint(1, 5) * 20  # how often to sample
+
+# sample every N seconds; we randomize inside the loop too
+INTERVAL_SECONDS = random.randint(1, 5) * 20
+
 LOG_FILE = "labels.jsonl"
 
 API_BASE = "http://127.0.0.1:8000"
 USER_NAME = "johnny"      # change as you like
 GROUP_NAME = "hackathon"  # change as you like
-
-DB_PATH = Path("big_brother.db")
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
@@ -46,7 +40,7 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # Screenshot capture (no disk)
 # =========================
 
-def capture_screenshot_png_bytes():
+def capture_screenshot_png_bytes() -> bytes:
     """
     Capture the full main display as PNG bytes (in memory only).
     """
@@ -88,14 +82,12 @@ def classify_image_label(png_bytes: bytes) -> int | None:
         "Return ONLY a single digit: 0, 1, 2, 3, 4, or 5. No explanation, no spaces."
     )
 
-    # Build image part
     image_part = types.Part.from_bytes(
         data=png_bytes,
         mime_type="image/png",
     )
 
     try:
-        # multimodal generateContent call
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[
@@ -107,13 +99,11 @@ def classify_image_label(png_bytes: bytes) -> int | None:
         print(f"[ERROR] Gemini request failed: {e}")
         return None
 
-    # response.text should be the model's text output
     text = (getattr(response, "text", None) or "").strip()
     if not text:
         print("[WARN] Empty response from Gemini")
         return None
 
-    # Extract the first digit 0–5
     for ch in text:
         if ch.isdigit():
             label = int(ch)
@@ -125,10 +115,8 @@ def classify_image_label(png_bytes: bytes) -> int | None:
 
 
 # =========================
-# Logging
+# Logging to backend (Supabase via FastAPI)
 # =========================
-
-API_BASE = "http://127.0.0.1:8000"
 
 def log_label(label: int):
     ts = datetime.now(UTC).isoformat()
@@ -140,6 +128,7 @@ def log_label(label: int):
                 "user": USER_NAME,
                 "group": GROUP_NAME,
                 "label": int(label),
+                # backend ignores extra fields, but timestamp is nice to have
                 "timestamp": ts,
             },
             timeout=5,
@@ -149,32 +138,49 @@ def log_label(label: int):
         print(f"[ERROR] Failed to send event to backend: {e}")
         return
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception as e:
+        print(f"[ERROR] Backend OK but JSON parse failed: {e}")
+        return
+
+    # old SQLite backend used "points_for_this_event"
+    # Supabase backend uses "points_added"
+    raw_points = data.get("points_for_this_event")
+    if raw_points is None:
+        raw_points = data.get("points_added")
+
+    raw_pool = data.get("pool_points")
+
+    try:
+        event_points = float(raw_points) if raw_points is not None else 0.0
+    except (TypeError, ValueError):
+        event_points = 0.0
+
+    try:
+        pool_points = float(raw_pool) if raw_pool is not None else 0.0
+    except (TypeError, ValueError):
+        pool_points = 0.0
+
     print(
         f"[LOG] {ts} -> {USER_NAME}@{GROUP_NAME} label {label} ({data.get('label_name')}) | "
-        f"event_points={data.get('points_for_this_event'):.2f}, "
-        f"pool={data.get('pool_points'):.2f}"
+        f"event_points={event_points:.2f}, pool={pool_points:.2f}"
     )
 
-
-
-def init_db():
-    if not DB_PATH.exists():
-        raise RuntimeError(f"Database {DB_PATH} not found. Run db_init.py first.")
 
 # =========================
 # Main loop
 # =========================
 
 def main():
-    init_db()
     print("Starting productivity tracker (Gemini)…")
     print(f"Model: {GEMINI_MODEL}")
-    print(f"Sampling every {INTERVAL_SECONDS} seconds.")
+    print(f"Sampling every {INTERVAL_SECONDS} seconds (randomized after each loop).")
     print(f"Logging to {LOG_FILE}")
     print("Press Ctrl+C to stop.\n")
 
     interval_seconds = INTERVAL_SECONDS
+
     while True:
         try:
             print("[INFO] Capturing screenshot…")
@@ -187,7 +193,6 @@ def main():
                 print("[WARN] Classification failed or returned None, skipping log.")
             else:
                 log_label(label)
-            
 
         except KeyboardInterrupt:
             print("\n[INFO] Stopped by user.")
@@ -197,6 +202,7 @@ def main():
 
         time.sleep(interval_seconds)
         interval_seconds = random.randint(1, 5) * 20
+
 
 if __name__ == "__main__":
     main()
