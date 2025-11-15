@@ -89,21 +89,6 @@ def get_week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def get_or_create_pool(conn, week_start_str: str) -> int:
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id FROM pools WHERE week_start_utc_date = ?",
-        (week_start_str,),
-    )
-    row = cur.fetchone()
-    if row:
-        return row[0]
-
-    cur.execute(
-        "INSERT INTO pools (week_start_utc_date, pool_points) VALUES (?, 0.0)",
-        (week_start_str,),
-    )
-    return cur.lastrowid
 
 
 def get_or_create_pool(conn, group_name: str, week_start_str: str) -> int:
