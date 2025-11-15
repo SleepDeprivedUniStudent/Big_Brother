@@ -41,13 +41,16 @@ CREATE TABLE IF NOT EXISTS samples (
 
 CREATE TABLE IF NOT EXISTS pools (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_name           TEXT    NOT NULL,
     week_start_utc_date  TEXT    NOT NULL,
     pool_points          REAL    NOT NULL DEFAULT 0.0,
-    UNIQUE (week_start_utc_date)
+    UNIQUE (group_name, week_start_utc_date)
 );
 
 CREATE TABLE IF NOT EXISTS weekly_stats (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_name            TEXT    NOT NULL,
+    group_name           TEXT    NOT NULL,
     week_start_utc_date  TEXT    NOT NULL,
     productive_seconds   REAL    NOT NULL DEFAULT 0,
     other_seconds        REAL    NOT NULL DEFAULT 0,
@@ -56,7 +59,7 @@ CREATE TABLE IF NOT EXISTS weekly_stats (
     doomscroll_seconds   REAL    NOT NULL DEFAULT 0,
     jackingoff_seconds   REAL    NOT NULL DEFAULT 0,
     pool_contrib_points  REAL    NOT NULL DEFAULT 0,
-    UNIQUE (week_start_utc_date)
+    UNIQUE (user_name, group_name, week_start_utc_date)
 );
 
 CREATE TABLE IF NOT EXISTS contribution_events (
@@ -66,9 +69,12 @@ CREATE TABLE IF NOT EXISTS contribution_events (
     label           INTEGER NOT NULL,
     duration_sec    REAL    NOT NULL,
     points          REAL    NOT NULL,
+    user_name       TEXT    NOT NULL,
+    group_name      TEXT    NOT NULL,
     FOREIGN KEY (sample_id) REFERENCES samples(id)
 );
 """
+
 
 
 def init_db():
