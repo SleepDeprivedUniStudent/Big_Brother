@@ -18,11 +18,13 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+import random
+
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")  # vision-capable model
-INTERVAL_SECONDS = 20  # how often to sample
+INTERVAL_SECONDS =  random.randint(1, 5) * 20  # how often to sample
 LOG_FILE = "labels.jsonl"
 
 API_BASE = "http://127.0.0.1:8000"
@@ -172,6 +174,7 @@ def main():
     print(f"Logging to {LOG_FILE}")
     print("Press Ctrl+C to stop.\n")
 
+    interval_seconds = INTERVAL_SECONDS
     while True:
         try:
             print("[INFO] Capturing screenshot…")
@@ -184,6 +187,7 @@ def main():
                 print("[WARN] Classification failed or returned None, skipping log.")
             else:
                 log_label(label)
+            
 
         except KeyboardInterrupt:
             print("\n[INFO] Stopped by user.")
@@ -191,7 +195,8 @@ def main():
         except Exception as e:
             print(f"[ERROR] Unexpected error in loop: {e}")
 
-        time.sleep(INTERVAL_SECONDS)
+        time.sleep(interval_seconds)
+        interval_seconds = random.randint(1, 5) * 20
 
 if __name__ == "__main__":
     main()
