@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel
 from supabase import create_client
+from datetime import datetime
+from pydantic import BaseModel
 
 # --------------------
 # Env & Supabase client
@@ -18,6 +20,16 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set correctly in .env")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+class CreateGroupIn(BaseModel):
+    user: str          # username of the creator
+    group_name: str    # human-readable name
+
+
+class CreateGroupOut(BaseModel):
+    join_code: str
+    group_id: str
+    group_name: str
 
 # --------------------
 # Config
@@ -225,7 +237,8 @@ class EventIn(BaseModel):
     user: str
     group: str
     label: int
-
+    # optional timestamp sent by the client; we won't rely on it yet
+    timestamp: str | None = None
 
 app = FastAPI(title="Big Brother Supabase Backend")
 
@@ -235,8 +248,6 @@ def root():
     return {"status": "ok", "backend": "supabase"}
 
 
-<<<<<<< Updated upstream
-=======
 @app.post("/create-group", response_model=CreateGroupOut)
 def create_group(payload: CreateGroupIn):
     username = payload.user.strip()
@@ -304,7 +315,6 @@ def create_group(payload: CreateGroupIn):
         group_name=group_name,
     )
 
->>>>>>> Stashed changes
 @app.post("/events")
 def post_event(event: EventIn):
     now = datetime.now(timezone.utc)
@@ -350,7 +360,8 @@ def post_event(event: EventIn):
     ).eq("id", pool_row["id"]).execute()
 
     # 4) insert event row
-    event_ts = event.timestamp or now
+    # For now, just use server-side 'now' as the authoritative timestamp.
+    event_ts = now
     supabase.table("events").insert(
         {
             "user_id": user_id,
@@ -382,19 +393,14 @@ def post_event(event: EventIn):
     return {
         "ok": True,
         "user": event.user,
-<<<<<<< Updated upstream
-        "group": event.group,
-=======
         "user_id": user_id,
-        "group": group_display_name,
-        "group_join_code": event.join_code,
->>>>>>> Stashed changes
+        "group": event.group,
         "label": event.label,
         "label_name": label_name,
         "points_added": cost,
         "week_start": week_start_str,
         "pool_points": new_pool,          # weekly pool (for that group + week)
-        # New: round-related info
+        # round-related info
         "round_id": round_id,
         "round_number": round_row.get("round_number"),
         "round_pool": new_round_pool,     # pool for this active round
