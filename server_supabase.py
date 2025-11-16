@@ -57,6 +57,7 @@ class CreateGroupOut(BaseModel):
 # Config
 # ====================
 
+ROUND_LENGTH = timedelta(minutes=5)
 # label mapping:
 # 0 = productive, 1 = other, 2 = shopping, 3 = gaming, 4 = doomscrolling, 5 = jacking off
 LABEL_NAME = {
@@ -219,55 +220,95 @@ def ensure_weekly_stats(user_id: str, group_id: str, week_start: str) -> dict:
     )
     return inserted.data[0]
 
-
-def ensure_active_round(group_id: str) -> dict:
+def get_or_cycle_active_round(group_id: str) -> dict:
     """
-    Ensure there is an active game_rounds row for this group.
-    If none exists, create a new round with the next round_number.
+    This is the main game engine. It finds the active round,
+    ends it if its time is up, and creates a new one.
+    It always returns the current, valid, active round.
     """
     now = datetime.now(timezone.utc)
 
-    # Try to find an existing active round
+    # 1. Try to find an existing active round
     res = (
         supabase.table("game_rounds")
         .select("*")
         .eq("group_id", group_id)
         .eq("status", "active")
-        .order("start_time", desc=False)
+        .order("start_time", desc=True)
         .limit(1)
         .execute()
     )
-    rows = res.data or []
-    if rows:
-        return rows[0]
+    
+    active_round = res.data[0] if res.data else None
 
-    # No active round found – create a new one with next round_number
-    max_round_res = (
-        supabase.table("game_rounds")
-        .select("round_number")
-        .eq("group_id", group_id)
-        .order("round_number", desc=True)
-        .limit(1)
-        .execute()
-    )
-    max_rows = max_round_res.data or []
-    if max_rows:
-        next_round_number = (max_rows[0].get("round_number") or 0) + 1
-    else:
-        next_round_number = 1
+    # 2. Check if the found round is expired
+    # --- THIS IS THE FIX ---
+    if active_round:
+        # Parse the end_time string from the DB
+        end_time_from_db = datetime.fromisoformat(active_round["end_time"])
+        
+        # Make the naive datetime "aware" by telling it it's UTC
+        aware_end_time = end_time_from_db.replace(tzinfo=timezone.utc)
 
-    insert_payload = {
-        "group_id": group_id,
-        "round_number": next_round_number,
-        "start_time": now.isoformat(),
-        "status": "active",
-        "pool": 0,
-    }
-    inserted = supabase.table("game_rounds").insert(insert_payload).execute()
-    return inserted.data[0]
+        if now > aware_end_time:
+            # --- TIME IS UP! END THE OLD ROUND ---
+            print(f"Ending round {active_round['id']}...")
+            
+            # Find the winner (lowest score)
+            winner_res = (
+                supabase.table("round_stats")
+                .select("user_id, current_score")
+                .eq("round_id", active_round["id"])
+                .order("current_score", desc=False) # False = ASC (lowest score wins)
+                .limit(1)
+                .execute()
+            )
+            
+            winner_id = winner_res.data[0]["user_id"] if winner_res.data else None
+            
+            # Update the old round
+            supabase.table("game_rounds").update(
+                {"status": "finished", "winner_id": winner_id}
+            ).eq("id", active_round["id"]).execute()
+            
+            print(f"Winner is {winner_id}")
+            
+            # Set active_round to None so we create a new one
+            active_round = None 
+
+    # 3. If no round exists (or we just ended one), create a new one
+    if not active_round:
+        print("Creating new round...")
+        # Find the next round_number
+        max_round_res = (
+            supabase.table("game_rounds")
+            .select("round_number")
+            .eq("group_id", group_id)
+            .order("round_number", desc=True)
+            .limit(1)
+            .execute()
+        )
+        next_round_number = (max_round_res.data[0]["round_number"] + 1) if max_round_res.data else 1
+        
+        # Create the new round
+        end_time = now + ROUND_LENGTH
+        insert_payload = {
+            "group_id": group_id,
+            "round_number": next_round_number,
+            "start_time": now.isoformat(),
+            "end_time": end_time.isoformat(),
+            "status": "active",
+            "pool": 0,
+            "winner_id": None
+        }
+        inserted = supabase.table("game_rounds").insert(insert_payload).execute()
+        active_round = inserted.data[0]
+
+    # 4. Return the guaranteed active round
+    return active_round
 
 
-def ensure_round_stats(round_id: str, user_id: str) -> dict:
+def ensure_round_stats(round_id: str, user_id: str, round_number: int) -> dict: # <-- 1. Add argument
     """
     Ensure there is a round_stats row for this (round_id, user_id).
     """
@@ -288,6 +329,8 @@ def ensure_round_stats(round_id: str, user_id: str) -> dict:
             {
                 "round_id": round_id,
                 "user_id": user_id,
+                "round_number": round_number,
+                "current_score": 0.0,
             }
         )
         .execute()
@@ -504,9 +547,10 @@ def post_event(event: EventIn):
     group_id = ensure_group(event.group)
     ensure_membership(user_id, group_id)
 
-    # 3) ensure active round & per-user round stats
-    round_row = ensure_active_round(group_id)
+    # 2) ensure active round & per-user round stats
+    round_row = get_or_cycle_active_round(group_id)
     round_id = round_row["id"]
+    round_num = round_row.get("round_number")
 
     # Update this round's total pool
     current_round_pool = float(round_row.get("pool") or 0.0)
@@ -516,9 +560,11 @@ def post_event(event: EventIn):
     ).eq("id", round_id).execute()
 
     # Ensure per-user round stats and update their current_score
-    round_stats_row = ensure_round_stats(round_id, user_id)
+    round_stats_row = ensure_round_stats(round_id, user_id, round_num)
+
     current_score = float(round_stats_row.get("current_score") or 0.0)
     new_score = current_score + cost
+    
     supabase.table("round_stats").update(
         {"current_score": new_score}
     ).eq("id", round_stats_row["id"]).execute()
