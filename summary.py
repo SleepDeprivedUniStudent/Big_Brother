@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 # Match INTERVAL_SECONDS from tracker_gemini.py
 INTERVAL_SECONDS = 20
 
-# Penalty per MINUTE for each label
+# Penalty per MINUTE for each label 
 PENALTY_PER_MINUTE = {
     0: 0.00,  # productive
     1: 0.01,  # other
@@ -20,7 +20,7 @@ LABEL_NAMES = {
     2: "shopping",
     3: "gaming",
     4: "doomscrolling",
-    5: "jacking off",
+    5: "gambling",
 }
 
 def main():

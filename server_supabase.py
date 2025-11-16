@@ -10,6 +10,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
 # ====================
 # Env & Supabase client
 # ====================
@@ -59,14 +62,14 @@ class CreateGroupOut(BaseModel):
 
 ROUND_LENGTH = timedelta(minutes=5)
 # label mapping:
-# 0 = productive, 1 = other, 2 = shopping, 3 = gaming, 4 = doomscrolling, 5 = jacking off
+# 0 = productive, 1 = other, 2 = shopping, 3 = gaming, 4 = doomscrolling, 5 = gambling
 LABEL_NAME = {
     0: "productive",
     1: "other",
     2: "shopping",
     3: "gaming",
     4: "doomscrolling",
-    5: "jackingoff",
+    5: "gambling",
 }
 
 # map label -> money/points per event (you can tweak these)
@@ -76,7 +79,7 @@ LABEL_COST = {
     2: 0.1,   # shopping
     3: 0.3,   # gaming
     4: 0.2,   # doomscrolling
-    5: 0.5,   # jacking off
+    5: 0.5,   # gambling
 }
 
 # map label -> column name in weekly_stats
@@ -86,7 +89,7 @@ SECONDS_FIELD = {
     2: "shopping_seconds",
     3: "gaming_seconds",
     4: "doomscroll_seconds",      # NOTE: table column is doomscroll_seconds
-    5: "jackingoff_seconds",
+    5: "gambling_seconds",
 }
 
 INTERVAL_SECONDS = 20  # each tracker tick (seconds)
@@ -437,7 +440,7 @@ def notify_unproductive_round(
         "shopping":      "is shopping",
         "gaming":        "is gaming",
         "doomscrolling": "is doomscrolling again",
-        "jackingoff":    "is jerking their shit off again",
+        "gambling":      "is blowing their savings on sports bets",
     }
 
     roast_line = ROASTS.get(label_name, f"did some {label_name} nonsense")
@@ -467,9 +470,12 @@ def notify_unproductive_round(
 app = FastAPI(title="Big Brother Supabase Backend")
 
 
+#app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
+
 @app.get("/")
-def root():
-    return {"status": "ok", "backend": "supabase"}
+def serve_frontend():
+    """Serves the main frontend HTML file."""
+    return FileResponse('frontend/index.html')
 
 
 @app.post("/create-group", response_model=CreateGroupOut)
@@ -635,6 +641,113 @@ def post_event(event: EventIn):
         "user_round_score": new_score,    # this user's score in this round
     }
 
+@app.get("/round-summary")
+def get_round_summary(group: str):
+    """
+    Get the live status of the current round, the leaderboard,
+    and the winner of the last round.
+    """
+    now = datetime.now(timezone.utc)
+
+    # 1. Find the group
+    group_res = (
+        supabase.table("groups")
+        .select("id, group_name")
+        .eq("group_name", group)
+        .limit(1)
+        .execute()
+    )
+    if not group_res.data:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    group_id = group_res.data[0]["id"]
+    group_name = group_res.data[0]["group_name"]
+
+    # 2. Find the current active round
+    active_round_res = (
+        supabase.table("game_rounds")
+        .select("*")
+        .eq("group_id", group_id)
+        .eq("status", "active")
+        .order("start_time", desc=True)
+        .limit(1)
+        .execute()
+    )
+    
+    active_round = active_round_res.data[0] if active_round_res.data else None
+
+    # 3. Find the last finished round's winner
+    last_winner_name = None
+    last_finished_round_res = (
+        supabase.table("game_rounds")
+        .select("winner_id")
+        .eq("group_id", group_id)
+        .eq("status", "finished")
+        .order("end_time", desc=True) # Get the most recent finished round
+        .limit(1)
+        .execute()
+    )
+    
+    if last_finished_round_res.data:
+        winner_id = last_finished_round_res.data[0].get("winner_id")
+        if winner_id:
+            winner_res = (
+                supabase.table("users")
+                .select("username")
+                .eq("id", winner_id)
+                .limit(1)
+                .execute()
+            )
+            if winner_res.data:
+                last_winner_name = winner_res.data[0].get("username")
+
+    # 4. If no active round, return a "waiting" state
+    if not active_round:
+        return {
+            "group_name": group_name,
+            "active_round": None,
+            "leaderboard": [],
+            "last_winner": {"username": last_winner_name} if last_winner_name else None,
+            "message": "No active round. Waiting for first event..."
+        }
+
+    # 5. Get the live leaderboard for the active round
+    # This query joins "round_stats" with "users" to get usernames
+    leaderboard_res = (
+        supabase.table("round_stats")
+        .select("current_score, users(username)") # Magic join!
+        .eq("round_id", active_round["id"])
+        .order("current_score", desc=False) # False = ASC (lowest score wins)
+        .execute()
+    )
+
+    # 6. Format the leaderboard data for the frontend
+    leaderboard_data = leaderboard_res.data or []
+    leaderboard = []
+    for row in leaderboard_data:
+        # The join returns: {"current_score": 0.5, "users": {"username": "johnny"}}
+        username = "Unknown"
+        if row.get("users"): # Check if the 'users' object exists
+            username = row["users"].get("username", "Unknown")
+            
+        leaderboard.append({
+            "username": username,
+            "score": row.get("current_score", 0.0)
+        })
+
+    # 7. Assemble and return the final JSON
+    return {
+        "group_name": group_name,
+        "active_round": {
+            "round_id": active_round["id"],
+            "round_number": active_round.get("round_number"),
+            "pool": active_round.get("pool"),
+            "start_time": active_round.get("start_time"),
+            "end_time": active_round.get("end_time")
+        },
+        "leaderboard": leaderboard,
+        "last_winner": {"username": last_winner_name} if last_winner_name else None
+    }
 
 @app.get("/week-summary")
 def week_summary(group: str):
