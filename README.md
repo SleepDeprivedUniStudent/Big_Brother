@@ -54,14 +54,14 @@ SUPABASE_SERVICE_ROLE_KEY=your_api_key_here
 ```bash
 cd ~/Big_Brother
 source .venv/bin/activate
-uvicorn server:app --reload
+uvicorn server_supabase:app --reload
 ```
 
 **Terminal B (Start Productivity Tracker):**
 
 ```bash
 cd ~/Big_Brother
-source .venv/bin/activate
+.venv/bin/activate
 python tracker_gemini.py
 ```
 
