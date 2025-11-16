@@ -7,13 +7,7 @@ A productivity tracker that captures screenshots periodically, classifies the ac
 ## Features
 
 - Screenshots computer activity at regular intervals
-- Classifies screenshots into categories:
-  - `0 = Productive`
-  - `1 = Other`
-  - `2 = Shopping`
-  - `3 = Gaming`
-  - `4 = Doomscrolling`
-  - `5 = Jacking Off`
+- Classifies screenshots into a number between 0 and 5 (inclusive)
 - Logs events to a local FastAPI backend
 - Tracks weekly stats per user and group
 - Computes "pool points" and penalties for unproductive activity

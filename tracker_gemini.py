@@ -69,21 +69,10 @@ def classify_image_label(png_bytes: bytes) -> int | None:
     """
 
     prompt = (
-        "You are classifying a computer screenshot into EXACTLY one category.\n\n"
-        "Use the following label definitions:\n\n"
-        "0 = PRODUCTIVE — work, study, tools, coding, IDEs, terminals, emails, docs,\n"
-        "    spreadsheets, academic videos, note-taking, productivity apps.\n\n"
-        "1 = OTHER — desktop, lock screen, wallpaper, file explorer, system settings,\n"
-        "    anything not clearly in another category.\n\n"
-        "2 = SHOPPING — browsing products, online stores, carts, checkout pages, Amazon,\n"
-        "    eBay, AliExpress, Shein, storefronts, product grids, product pages.\n\n"
-        "3 = GAMING — video games, game clients, full-screen games, Steam/Epic launchers,\n"
-        "    game lobbies, character screens, gameplay, Twitch streaming dashboards.\n\n"
-        "4 = DOOMSCROLLING — social media feeds such as TikTok, Instagram feed, X/Twitter\n"
-        "    timelines, Reddit scrolling, YouTube Shorts feed, vertical content feeds.\n\n"
-        "5 = JACKING OFF — porn websites, explicit sexual content, nude bodies, sexual\n"
-        "    thumbnails, explicit video frames, explicit chats, NSFW material.\n\n"
-        "Return ONLY a single digit: 0, 1, 2, 3, 4, or 5. No explanation, no spaces."
+        "You are classifying a computer screenshot based on how productive the user is.\n\n"
+        "You should return a float digit between 0 and 5 (inclusive), where:\n"
+        "- 0 = Very Productive (e.g. coding, writing, work documents)\n"
+        "- 5 - Very Unproductive (e.g. gaming, gambling sites, wasting time)\n\n"
     )
 
     image_part = types.Part.from_bytes(
@@ -109,10 +98,11 @@ def classify_image_label(png_bytes: bytes) -> int | None:
         return None
 
     for ch in text:
-        if ch.isdigit():
-            label = int(ch)
-            if 0 <= label <= 5:
-                return label
+        try:
+            label = float(ch)
+            return label
+        except ValueError:
+            continue
 
     print(f"[WARN] Could not parse label from response text: {text!r}")
     return None
