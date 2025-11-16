@@ -7,7 +7,7 @@ import random
 from datetime import datetime
 import sqlite3
 from pathlib import Path
-from datetime import datetime, UTC, timedelta
+from datetime import datetime, UTC, timedelta, timezone
 import getpass
 
 import requests
@@ -133,7 +133,7 @@ def update_leaderboard(data: json):
 
 def log_label(label: int):
     ts = datetime.now(timezone.utc).time()
-
+    ts_str = ts.strftime("%H:%M:%S.%f")
     try:
         resp = requests.post(
             f"{API_BASE}/events",
@@ -142,7 +142,7 @@ def log_label(label: int):
                 "group": GROUP_NAME,
                 "label": int(label),
                 # backend ignores extra fields, but timestamp is nice to have
-                "timestamp": ts,
+                "timestamp": ts_str,
             },
             timeout=5,
         )
