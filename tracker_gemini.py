@@ -2,13 +2,9 @@ import os
 import time
 import json
 import io
-from datetime import datetime, UTC
 import random
-from datetime import datetime
-import sqlite3
-from pathlib import Path
-from datetime import datetime, UTC, timedelta, timezone
 import getpass
+from datetime import datetime, timezone
 
 import requests
 import mss
@@ -30,7 +26,10 @@ LOG_FILE = "labels.jsonl"
 
 API_BASE = "http://127.0.0.1:8000"
 USER_NAME = getpass.getuser()      # change as you like
-GROUP_NAME = "hackathon"  # change as you like
+GROUP_NAME = "hackathon"           # change as you like
+
+# email: can be set via env or prompted once
+USER_EMAIL = os.getenv("USER_EMAIL")  # optional; if None we'll prompt when backend requires it
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
@@ -123,32 +122,80 @@ def classify_image_label(png_bytes: bytes) -> int | None:
 # Logging to backend (Supabase via FastAPI)
 # =========================
 
+def maybe_prompt_for_email(detail_msg: str | None) -> None:
+    """
+    If backend says email is required and we don't have one yet, prompt user once.
+    """
+    global USER_EMAIL
 
-# Update the leaderboard and siphon funds
-def update_leaderboard(data: json):
-    #if()
-    #everything = json.loads(data)
-    #DATABASE[1] = DATABASE[1] + everything["label"]
-    pass
+    if USER_EMAIL:
+        return
+
+    if detail_msg not in ("Email required for new users", "Email required for this user"):
+        return
+
+    while not USER_EMAIL:
+        entered = input(
+            "\n[SETUP] Backend requires an email for punishment emails.\n"
+            "Enter your email (or leave blank to cancel): "
+        ).strip()
+        if not entered:
+            print("[INFO] No email provided; this event will be skipped.")
+            return
+        USER_EMAIL = entered
+        print(f"[INFO] Using email: {USER_EMAIL}")
+
 
 def log_label(label: int):
-    ts = datetime.now(timezone.utc).time()
-    ts_str = ts.strftime("%H:%M:%S.%f")
+    global USER_EMAIL
+
+    # we don't really need this timestamp on backend now, but keep it for logs
+    ts = datetime.now(timezone.utc)
+    ts_str = ts.isoformat()
+
+    payload = {
+        "user": USER_NAME,
+        "group": GROUP_NAME,
+        "label": int(label),
+        "timestamp": ts_str,
+        "email": USER_EMAIL,
+    }
+
+    url = f"{API_BASE}/events"
+
+    # First attempt
     try:
-        resp = requests.post(
-            f"{API_BASE}/events",
-            json={
-                "user": USER_NAME,
-                "group": GROUP_NAME,
-                "label": int(label),
-                # backend ignores extra fields, but timestamp is nice to have
-                "timestamp": ts_str,
-            },
-            timeout=5,
-        )
-        resp.raise_for_status()
+        resp = requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"[ERROR] Failed to send event to backend: {e}")
+        return
+
+    # If backend demands email, prompt once and retry
+    if resp.status_code == 400:
+        try:
+            data = resp.json()
+            detail = data.get("detail")
+        except Exception:
+            detail = None
+
+        maybe_prompt_for_email(detail)
+
+        if USER_EMAIL and detail in ("Email required for new users", "Email required for this user"):
+            payload["email"] = USER_EMAIL
+            try:
+                resp = requests.post(url, json=payload, timeout=5)
+            except Exception as e:
+                print(f"[ERROR] Failed to resend event after email input: {e}")
+                return
+        else:
+            # either user refused email or this is some other 400
+            print(f"[ERROR] Backend 400: {resp.text}")
+            return
+
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] Backend error: {e} — body: {resp.text}")
         return
 
     try:
