@@ -1,13 +1,9 @@
 import os
 import time
-import json
 import io
-from datetime import datetime, UTC
 import random
-from datetime import datetime
-import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
-from datetime import datetime, UTC, timedelta, timezone
 import getpass
 
 import requests
@@ -18,27 +14,75 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+# =========================
+# Env & basic config
+# =========================
+
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")  # vision-capable model
-
-# sample every N seconds; we randomize inside the loop too
-INTERVAL_SECONDS = random.randint(1, 5) * 20
-
-LOG_FILE = "labels.jsonl"
-
-API_BASE = "http://127.0.0.1:8000"
-USER_NAME = getpass.getuser()      # change as you like
-GROUP_NAME = "hackathon"  # change as you like
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")  # override in .env if needed
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
         "GEMINI_API_KEY (or GOOGLE_API_KEY) not set. Put it in a .env file or env var."
     )
 
+API_BASE = "http://127.0.0.1:8000"
+
+USER_NAME = getpass.getuser()
+
+# Sample every N seconds; we randomize inside the loop as well
+INITIAL_INTERVAL_SECONDS = random.randint(1, 5) * 20
+
+LOG_FILE = "labels.jsonl"  # still here for backwards compat, not strictly required
+
+# Where we remember the join code locally for this machine/user
+JOIN_CODE_FILE = Path.home() / ".big_brother_join_code"
+
 # Create a single Gemini client (Developer API)
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+# =========================
+# Join code handling
+# =========================
+
+def load_join_code() -> str:
+    """
+    Join code resolution order:
+      1) JOIN_CODE from environment (if set)
+      2) value from ~/.big_brother_join_code
+      3) prompt the user once and save it to ~/.big_brother_join_code
+
+    Returns "" (empty string) if user does not enter anything.
+    """
+    # 1) env var
+    env_code = os.getenv("JOIN_CODE")
+    if env_code:
+        return env_code.strip()
+
+    # 2) stored file
+    if JOIN_CODE_FILE.exists():
+        return JOIN_CODE_FILE.read_text(encoding="utf-8").strip()
+
+    # 3) ask user
+    try:
+        code = input("Enter group join code (e.g. HACK123), or leave blank for solo mode: ").strip()
+    except EOFError:
+        code = ""
+
+    if not code:
+        print("No join code entered. Running in solo mode (no shared pool / leaderboard).")
+        return ""
+
+    # remember for next runs
+    JOIN_CODE_FILE.write_text(code, encoding="utf-8")
+    print(f"Join code saved to {JOIN_CODE_FILE}")
+    return code
+
+
+JOIN_CODE = load_join_code()
 
 
 # =========================
@@ -67,6 +111,14 @@ def classify_image_label(png_bytes: bytes) -> int | None:
     """
     Send screenshot to Gemini multimodal model.
     Returns an int label 0–5 or None on error.
+
+    Labels:
+      0 = PRODUCTIVE
+      1 = OTHER
+      2 = SHOPPING
+      3 = GAMING
+      4 = DOOMSCROLLING
+      5 = JACKING OFF
     """
 
     prompt = (
@@ -123,27 +175,24 @@ def classify_image_label(png_bytes: bytes) -> int | None:
 # Logging to backend (Supabase via FastAPI)
 # =========================
 
-
-# Update the leaderboard and siphon funds
-def update_leaderboard(data: json):
-    #if()
-    #everything = json.loads(data)
-    #DATABASE[1] = DATABASE[1] + everything["label"]
-    pass
-
 def log_label(label: int):
-    ts = datetime.now(timezone.utc).time()
-    ts_str = ts.strftime("%H:%M:%S.%f")
+    # Use full ISO timestamp (UTC); backend currently ignores it, but it's useful to log
+    ts = datetime.now(timezone.utc).isoformat()
+
+    payload = {
+        "user": USER_NAME,
+        "label": int(label),
+        "timestamp": ts,
+    }
+
+    if JOIN_CODE:
+        payload["join_code"] = JOIN_CODE
+    # else: could fall back to legacy "group" field if you want a local-only group
+
     try:
         resp = requests.post(
             f"{API_BASE}/events",
-            json={
-                "user": USER_NAME,
-                "group": GROUP_NAME,
-                "label": int(label),
-                # backend ignores extra fields, but timestamp is nice to have
-                "timestamp": ts_str,
-            },
+            json=payload,
             timeout=5,
         )
         resp.raise_for_status()
@@ -157,7 +206,7 @@ def log_label(label: int):
         print(f"[ERROR] Backend OK but JSON parse failed: {e}")
         return
 
-    # old SQLite backend used "points_for_this_event"
+    # SQLite backend used "points_for_this_event"
     # Supabase backend uses "points_added"
     raw_points = data.get("points_for_this_event")
     if raw_points is None:
@@ -176,7 +225,8 @@ def log_label(label: int):
         pool_points = 0.0
 
     print(
-        f"[LOG] {ts} -> {USER_NAME}@{GROUP_NAME} label {label} ({data.get('label_name')}) | "
+        f"[LOG] {ts} -> {USER_NAME}@{JOIN_CODE or 'solo'} "
+        f"label {label} ({data.get('label_name')}) | "
         f"event_points={event_points:.2f}, pool={pool_points:.2f}"
     )
 
@@ -188,11 +238,15 @@ def log_label(label: int):
 def main():
     print("Starting productivity tracker (Gemini)…")
     print(f"Model: {GEMINI_MODEL}")
-    print(f"Sampling every {INTERVAL_SECONDS} seconds (randomized after each loop).")
+    if JOIN_CODE:
+        print(f"Join code: {JOIN_CODE}")
+    else:
+        print("No join code (solo mode – no shared leaderboard).")
+    print(f"Sampling every {INITIAL_INTERVAL_SECONDS} seconds (randomized after each loop).")
     print(f"Logging to {LOG_FILE}")
     print("Press Ctrl+C to stop.\n")
 
-    interval_seconds = INTERVAL_SECONDS
+    interval_seconds = INITIAL_INTERVAL_SECONDS
 
     while True:
         try:
