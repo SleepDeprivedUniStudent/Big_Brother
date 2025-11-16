@@ -168,7 +168,6 @@ def log_label(label: int):
         except Exception:
             detail = None
 
-        maybe_prompt_for_email(detail)
 
         if USER_EMAIL and detail in ("Email required for new users", "Email required for this user"):
             payload["email"] = USER_EMAIL

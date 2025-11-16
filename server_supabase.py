@@ -308,7 +308,7 @@ def get_or_cycle_active_round(group_id: str) -> dict:
     return active_round
 
 
-def ensure_round_stats(round_id: str, user_id: str, round_number: int) -> dict: # <-- 1. Add argument
+def ensure_round_stats(round_id: str, user_id: str) -> dict: # <-- 1. Add argument
     """
     Ensure there is a round_stats row for this (round_id, user_id).
     """
@@ -329,7 +329,6 @@ def ensure_round_stats(round_id: str, user_id: str, round_number: int) -> dict: 
             {
                 "round_id": round_id,
                 "user_id": user_id,
-                "round_number": round_number,
                 "current_score": 0.0,
             }
         )
@@ -541,7 +540,7 @@ def post_event(event: EventIn):
 
     # 1) ensure user & email requirement (Option 3)
     email = (event.email or "").strip() or None
-    user_id = ensure_user(event.user, email, require_email=True)
+    user_id = ensure_user(event.user, email, require_email=False)
 
     # 2) ensure group + membership
     group_id = ensure_group(event.group)
@@ -550,7 +549,6 @@ def post_event(event: EventIn):
     # 2) ensure active round & per-user round stats
     round_row = get_or_cycle_active_round(group_id)
     round_id = round_row["id"]
-    round_num = round_row.get("round_number")
 
     # Update this round's total pool
     current_round_pool = float(round_row.get("pool") or 0.0)
@@ -560,7 +558,7 @@ def post_event(event: EventIn):
     ).eq("id", round_id).execute()
 
     # Ensure per-user round stats and update their current_score
-    round_stats_row = ensure_round_stats(round_id, user_id, round_num)
+    round_stats_row = ensure_round_stats(round_id, user_id)
 
     current_score = float(round_stats_row.get("current_score") or 0.0)
     new_score = current_score + cost
