@@ -5,11 +5,11 @@ import io
 from datetime import datetime
 import sqlite3
 from pathlib import Path
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
+import getpass
 
 #FastAPI
 import requests
-from datetime import datetime, UTC
 
 import mss
 from PIL import Image
@@ -28,10 +28,16 @@ INTERVAL_SECONDS =  random.randint(1, 5) * 20  # how often to sample
 LOG_FILE = "labels.jsonl"
 
 API_BASE = "http://127.0.0.1:8000"
-USER_NAME = "johnny"      # change as you like
+USER_NAME = getpass.getuser()      # change as you like
 GROUP_NAME = "hackathon"  # change as you like
 
 DB_PATH = Path("big_brother.db")
+
+#LOGS = []
+#SCORE = 0
+#DATABASE = [LOGS, SCORE, 0]
+
+
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
@@ -130,8 +136,15 @@ def classify_image_label(png_bytes: bytes) -> int | None:
 
 API_BASE = "http://127.0.0.1:8000"
 
+# Update the leaderboard and siphon funds
+def update_leaderboard(data: json):
+    #if()
+    #everything = json.loads(data)
+    #DATABASE[1] = DATABASE[1] + everything["label"]
+    pass
+
 def log_label(label: int):
-    ts = datetime.now(UTC).isoformat()
+    ts = datetime.now(timezone.utc).time()
 
     try:
         resp = requests.post(
@@ -155,7 +168,10 @@ def log_label(label: int):
         f"event_points={data.get('points_for_this_event'):.2f}, "
         f"pool={data.get('pool_points'):.2f}"
     )
+    #Add simple data to the database
 
+    #DATABASE[0].append(data)
+    #update_leaderboard(data)
 
 
 def init_db():
